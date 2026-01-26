@@ -233,7 +233,7 @@ export default function App() {
                 cursorStyle: 'line',
                 renderLineHighlight: 'all',
                 fixedOverflowWidgets: true,
-                padding: { top: 0 },
+                padding: { top: 16 },
                 scrollbar: {
                   vertical: 'hidden',
                   horizontal: 'hidden'
@@ -331,9 +331,9 @@ export default function App() {
           </div>
 
           {/* Stdin Section */}
-          <div className={`border-t flex flex-col ${theme === 'dark' ? 'border-[#333] bg-[#252526]' : 'border-gray-200 bg-gray-50'}`}>
+          <div className={`flex flex-col ${theme === 'dark' ? 'bg-[#252526]' : 'bg-gray-50'}`}>
             <div
-              className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between cursor-pointer hover:bg-opacity-80 transition-colors"
+              className="h-8 px-4 text-xs text-gray-500 uppercase tracking-wider flex items-center justify-between cursor-pointer hover:bg-opacity-80 transition-colors"
               onClick={() => setStdinExpanded(!stdinExpanded)}
             >
               <div className="flex items-center space-x-2">
@@ -342,7 +342,6 @@ export default function App() {
                 </span>
                 <span>stdin</span>
               </div>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded ${theme === 'dark' ? 'bg-[#333] text-gray-400' : 'bg-gray-200 text-gray-600'}`}>Text</span>
             </div>
             <div
               className={`overflow-hidden ${stdinExpanded ? 'h-[35vh] opacity-100' : 'h-0 opacity-0'}`}
@@ -357,7 +356,7 @@ export default function App() {
                       : 'bg-white text-gray-800 border-gray-200 focus:border-gray-300'
                     }`}
                   spellCheck="false"
-                  placeholder="Enter input for stdin..."
+                  placeholder="Enter inputs..."
                 />
               </div>
             </div>
