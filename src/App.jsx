@@ -1,10 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import {
   Play,
   Moon,
   Sun,
   ChevronDown,
-  ChevronUp,
   Save,
   Maximize2,
   Minimize2,
@@ -13,18 +12,7 @@ import {
   Clock,
   CheckCircle2
 } from 'lucide-react';
-
-/* --- INSTRUCTIONS FOR LOCAL DEVELOPMENT ---
-   
-   To use the official npm package locally:
-   1. Run: npm install @monaco-editor/react
-   2. Uncomment the import below:
-      import Editor from '@monaco-editor/react';
-   3. Delete or comment out the 'InternalMonacoEditor' component definition at the bottom of this file.
-   4. Change <InternalMonacoEditor ... /> to <Editor ... /> in the render method.
-*/
-
-// import Editor from '@monaco-editor/react'; // UNCOMMENT THIS FOR LOCAL USE
+import Editor from '@monaco-editor/react';
 
 const LANGUAGES = ['C++', 'Java', 'Python', 'JavaScript'];
 
@@ -51,7 +39,6 @@ export default function App() {
   const [output, setOutput] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [language, setLanguage] = useState('C++');
-  const [title, setTitle] = useState('Untitled');
   const [stdinExpanded, setStdinExpanded] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
@@ -226,10 +213,9 @@ export default function App() {
             <Editor
               height="100%"
               language={language.toLowerCase() === 'c++' ? 'cpp' : language.toLowerCase()}
-              theme={theme}
+              theme={theme === 'dark' ? 'vs-dark' : 'light'}
               value={code}
               onChange={handleEditorChange}
-              isFullScreen={isFullScreen} // Special prop for this demo to trigger layout
               loading={
                 <div className="flex items-center justify-center h-full text-gray-400 text-sm">
                   Loading Editor...
@@ -379,122 +365,6 @@ export default function App() {
 
         </section>
       </main>
-    </div>
-  );
-}
-
-// --- Internal Monaco Editor Shim (Use generic Editor component in production) ---
-
-function Editor({ height, language, theme, value, onChange, loading, options, isFullScreen }) {
-  const containerRef = useRef(null);
-  const editorRef = useRef(null);
-  const [isReady, setIsReady] = useState(false);
-  const themeRef = useRef(theme);
-
-  useEffect(() => {
-    themeRef.current = theme;
-  }, [theme]);
-
-  // Load Monaco via CDN for this preview
-  useEffect(() => {
-    if (!window.require) {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js';
-      script.async = true;
-      script.onload = () => setIsReady(true);
-      document.body.appendChild(script);
-    } else {
-      setIsReady(true);
-    }
-  }, []);
-
-  // Initialize Editor
-  useEffect(() => {
-    if (isReady && containerRef.current && !editorRef.current) {
-      window.require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
-
-      window.require(['vs/editor/editor.main'], function () {
-        if (!containerRef.current) return;
-
-        // Define custom dark theme to match app styling
-        window.monaco.editor.defineTheme('custom-dark', {
-          base: 'vs-dark',
-          inherit: true,
-          rules: [],
-          colors: {
-            'editor.background': '#1e1e1e',
-            'editor.lineHighlightBackground': '#2a2a2a',
-            'editorLineNumber.foreground': '#6e7681',
-            'editorLineNumber.activeForeground': '#e1e4e8'
-          }
-        });
-
-        const currentTheme = themeRef.current === 'dark' ? 'custom-dark' : 'light';
-
-        const editor = window.monaco.editor.create(containerRef.current, {
-          value: value,
-          language: language,
-          theme: currentTheme,
-          ...options
-        });
-
-        editor.onDidChangeModelContent(() => {
-          onChange(editor.getValue());
-        });
-
-        editorRef.current = editor;
-      });
-    }
-  }, [isReady]);
-
-  // Handle Updates
-  useEffect(() => {
-    if (editorRef.current && window.monaco) {
-      const model = editorRef.current.getModel();
-      if (model) {
-        window.monaco.editor.setModelLanguage(model, language);
-      }
-      // Define and set theme
-      window.monaco.editor.defineTheme('custom-dark', {
-        base: 'vs-dark',
-        inherit: true,
-        rules: [],
-        colors: {
-          'editor.background': '#1e1e1e',
-          'editor.lineHighlightBackground': '#2a2a2a',
-          'editorLineNumber.foreground': '#6e7681',
-          'editorLineNumber.activeForeground': '#e1e4e8'
-        }
-      });
-      window.monaco.editor.setTheme(theme === 'dark' ? 'custom-dark' : 'vs');
-    }
-  }, [language, theme]);
-
-  // Handle Value Update
-  useEffect(() => {
-    if (editorRef.current) {
-      const editor = editorRef.current;
-      if (editor.getValue() !== value) {
-        const pos = editor.getPosition();
-        editor.setValue(value);
-        editor.setPosition(pos);
-      }
-    }
-  }, [value]);
-
-  // Handle Resize
-  useEffect(() => {
-    if (editorRef.current) {
-      setTimeout(() => {
-        editorRef.current.layout();
-      }, 550);
-    }
-  }, [isFullScreen]);
-
-  return (
-    <div className="h-full w-full relative">
-      {!isReady && loading}
-      <div ref={containerRef} className="h-full w-full" />
     </div>
   );
 }
