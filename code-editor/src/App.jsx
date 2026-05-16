@@ -348,6 +348,7 @@ export default function App() {
                 fontSize: 14,
                 fontFamily: "'Menlo', 'Monaco', 'Courier New', monospace",
                 lineNumbers: 'on',
+                wordWrap: 'on',
                 scrollBeyondLastLine: false,
                 roundedSelection: false,
                 readOnly: false,
