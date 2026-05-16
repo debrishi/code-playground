@@ -330,7 +330,6 @@ export default function App() {
           className={`flex flex-col relative flex-1 min-w-0 ${theme === 'dark' ? 'border-[#333]' : 'border-gray-200'}`}
         >
           <div className="flex-1 relative overflow-hidden">
-            {/* Use InternalMonacoEditor for this preview, or <Editor> for local use */}
             <Editor
               height="100%"
               language={language.monaco}
