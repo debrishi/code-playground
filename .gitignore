@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+
+# Local agent / chat artifacts
+kiro.chat
+.kiro/
+
+# Python (code-lambda)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Docker build artifacts
+*.tar
