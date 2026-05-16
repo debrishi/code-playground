@@ -127,6 +127,14 @@ export default function App() {
   const abortRef = useRef(null);
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // Tracks whether the component is still mounted so post-await state
+  // updates in handleRunCode can no-op if the user navigated away mid-fetch.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
+
   // Drive the running-timer at 1Hz while a request is in flight.
   useEffect(() => {
     if (!isRunning) return;
@@ -185,6 +193,7 @@ export default function App() {
       // Success: { output: "..." }, possibly with the truncation marker.
       if (res.ok && typeof payload.output === 'string') {
         const truncated = payload.output.includes('[OUTPUT_TRUNCATED');
+        if (!isMountedRef.current) return;
         setOutput({
           status: truncated ? 'Output Limit Exceeded' : 'Finished',
           runtime,
@@ -200,6 +209,7 @@ export default function App() {
       // RUNTIME_ERROR carries partial stdout; everything else uses `details`.
       const details = payload.details || '';
       const partialStdout = typeof payload.output === 'string' ? payload.output : '';
+      if (!isMountedRef.current) return;
       setOutput({
         status: label,
         runtime,
@@ -209,6 +219,7 @@ export default function App() {
     } catch (e) {
       const runtime = Math.round(performance.now() - startedAt);
       const aborted = e.name === 'AbortError';
+      if (!isMountedRef.current) return;
       setOutput({
         status: aborted ? 'Request Timed Out' : 'Network Error',
         runtime,
@@ -219,7 +230,7 @@ export default function App() {
       });
     } finally {
       clearTimeout(timer);
-      setIsRunning(false);
+      if (isMountedRef.current) setIsRunning(false);
     }
   };
 
