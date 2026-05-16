@@ -101,6 +101,16 @@ function getStatusKind(status) {
 
 export default function App() {
   const [theme, setTheme] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  // Track OS theme changes so the playground stays in sync if the user toggles
+  // their system theme while the tab is open. The manual sun/moon toggle still
+  // overrides this — once the user clicks it, that choice sticks until the
+  // next OS-level change.
+  useEffect(() => {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = (e) => setTheme(e.matches ? 'dark' : 'light');
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
   // Code is per-language so switching languages doesn't blow away your work.
   const [codeByLang, setCodeByLang] = useState(STARTER_CODE);
   const [language, setLanguage] = useState(LANGUAGES[0]);
