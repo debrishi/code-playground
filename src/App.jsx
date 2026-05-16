@@ -9,6 +9,7 @@ import {
   Minimize2,
   Terminal,
   AlertCircle,
+  AlertTriangle,
   Clock,
   CheckCircle2
 } from 'lucide-react';
@@ -87,6 +88,16 @@ const ERROR_LABEL = {
   TIME_LIMIT_EXCEEDED: 'Time Limit Exceeded',
   MEMORY_LIMIT_EXCEEDED: 'Memory Limit Exceeded',
 };
+
+// Status -> visual severity. "Output Limit Exceeded" is a successful run that
+// just produced more than 4KB of stdout, so it's a warning, not an error.
+const WARNING_STATUSES = new Set(['Output Limit Exceeded']);
+const SUCCESS_STATUSES = new Set(['Finished']);
+function getStatusKind(status) {
+  if (SUCCESS_STATUSES.has(status)) return 'success';
+  if (WARNING_STATUSES.has(status)) return 'warning';
+  return 'error';
+}
 
 export default function App() {
   const [theme, setTheme] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -389,13 +400,26 @@ export default function App() {
               </div>
             ) : output ? (
               <div className="space-y-4 animate-in slide-in-from-bottom-2 fade-in duration-500">
-                {/* Status Badge */}
-                <div className={`flex items-center space-x-2 ${output.status === 'Finished' ? 'text-green-500' : 'text-red-500'}`}>
-                  {output.status === 'Finished'
-                    ? <CheckCircle2 size={16} />
-                    : <AlertCircle size={16} />}
-                  <span className="font-semibold">{output.status}</span>
-                </div>
+                {/* Status Badge — green/amber/red for success/warning/error */}
+                {(() => {
+                  const kind = getStatusKind(output.status);
+                  const tone = kind === 'success'
+                    ? 'text-green-500'
+                    : kind === 'warning'
+                      ? 'text-amber-500'
+                      : 'text-red-500';
+                  const Icon = kind === 'success'
+                    ? CheckCircle2
+                    : kind === 'warning'
+                      ? AlertTriangle
+                      : AlertCircle;
+                  return (
+                    <div className={`flex items-center space-x-2 ${tone}`}>
+                      <Icon size={16} />
+                      <span className="font-semibold">{output.status}</span>
+                    </div>
+                  );
+                })()}
 
                 {/* Runtime Info */}
                 {output.runtime > 0 && (
