@@ -119,7 +119,11 @@ export default function App() {
   const [output, setOutput] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [elapsed, setElapsed] = useState(0); // seconds, ticks while running
-  const [stdinExpanded, setStdinExpanded] = useState(false);
+  // stdin starts expanded so first-time users notice the input field —
+  // the Python and TypeScript starters read from stdin, so a collapsed
+  // panel with a magic 'Developer' default looks like the starter is
+  // ignoring input until you discover the chevron.
+  const [stdinExpanded, setStdinExpanded] = useState(true);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
 
