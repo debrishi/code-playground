@@ -1,141 +1,129 @@
 # Deployment — code-lambda
 
-Live in **`ap-south-1`** (Mumbai), account `694318441020`, arm64, container image.
+Containerised Python Lambda exposed via a public Function URL. Run from `code-lambda/`.
 
-| Resource | Value |
-|---|---|
-| ECR image | `694318441020.dkr.ecr.ap-south-1.amazonaws.com/code-lambda:latest` |
-| Lambda ARN | `arn:aws:lambda:ap-south-1:694318441020:function:code-lambda` |
-| Architecture | `arm64` |
-| Memory / Timeout | `1024 MB` / `20 s` |
-| Reserved concurrency | `10` |
-| Function URL | `https://kvdcixmh7iojuulgcyg7p7tiia0rwhps.lambda-url.ap-south-1.on.aws/` |
-| Auth | `NONE` + CORS `*` for POST |
+Prereqs: `aws login` complete, `docker buildx`, region set (`ap-south-1` here).
 
-## Steps
+```bash
+export AWS_REGION=ap-south-1
+export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export ECR=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/code-lambda
+```
 
-### 1. Build image for Lambda
-
-Lambda rejects OCI multi-platform manifests — build a single-arch Docker v2 manifest.
+## 1. Build
 
 ```bash
 docker buildx build --platform linux/arm64 --provenance=false --output=type=docker \
   -t code-lambda .
 ```
 
-### 2. Push to ECR
+Both `--provenance=false` and `--output=type=docker` are needed: BuildKit otherwise wraps the image in an OCI index that Lambda's container loader rejects.
+
+## 2. Test locally
 
 ```bash
-aws ecr create-repository --region ap-south-1 --repository-name code-lambda \
-  --image-scanning-configuration scanOnPush=true
-
-aws ecr get-login-password --region ap-south-1 \
-  | docker login --username AWS --password-stdin 694318441020.dkr.ecr.ap-south-1.amazonaws.com
-
-docker tag code-lambda:latest 694318441020.dkr.ecr.ap-south-1.amazonaws.com/code-lambda:latest
-docker push 694318441020.dkr.ecr.ap-south-1.amazonaws.com/code-lambda:latest
+docker run --rm -d -p 9000:8080 --name code-lambda-test code-lambda
+./test_suite.sh                       # core: warmup, all 4 langs, limits, errors
+./test_stdin.sh                       # stdin handling per language
+./test_stress.sh                      # body-wrap, isolation, unicode, large stdin
+docker stop code-lambda-test
 ```
 
-### 3. Execution role
+All three scripts hit the local Lambda Runtime Interface Emulator on `:9000`. Don't push if any fail.
+
+## 3. Push to ECR
 
 ```bash
-aws iam create-role --region ap-south-1 --role-name code-lambda-exec-role \
+aws ecr create-repository --region $AWS_REGION --repository-name code-lambda \
+  --image-scanning-configuration scanOnPush=true
+
+aws ecr get-login-password --region $AWS_REGION \
+  | docker login --username AWS --password-stdin $ECR
+
+docker tag code-lambda:latest $ECR:latest
+docker push $ECR:latest
+```
+
+## 4. Execution role
+
+```bash
+aws iam create-role --role-name code-lambda-exec-role \
   --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"lambda.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
 
-aws iam attach-role-policy --region ap-south-1 --role-name code-lambda-exec-role \
+aws iam attach-role-policy --role-name code-lambda-exec-role \
   --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
 
 sleep 10   # IAM propagation
 ```
 
-### 4. Create Lambda
+## 5. Create function
 
 ```bash
-aws lambda create-function --region ap-south-1 \
+aws lambda create-function --region $AWS_REGION \
   --function-name code-lambda \
   --package-type Image \
-  --code ImageUri=694318441020.dkr.ecr.ap-south-1.amazonaws.com/code-lambda:latest \
-  --role arn:aws:iam::694318441020:role/code-lambda-exec-role \
+  --code ImageUri=$ECR:latest \
+  --role arn:aws:iam::$AWS_ACCOUNT_ID:role/code-lambda-exec-role \
   --architectures arm64 \
   --memory-size 1024 \
   --timeout 20
-```
 
-Wait until `State=Active`:
-```bash
-aws lambda get-function --region ap-south-1 --function-name code-lambda \
+# Wait for State=Active
+aws lambda get-function --region $AWS_REGION --function-name code-lambda \
   --query 'Configuration.State' --output text
 ```
 
-### 5. Function URL + public invoke permissions
+## 6. Function URL
 
-Since Oct 2025, Lambda requires **both** `InvokeFunctionUrl` **and** `InvokeFunction` permissions.
+Lambda requires **both** `InvokeFunctionUrl` and `InvokeFunction` (since Oct 2025).
 
 ```bash
-aws lambda create-function-url-config --region ap-south-1 --function-name code-lambda \
+aws lambda create-function-url-config --region $AWS_REGION --function-name code-lambda \
   --auth-type NONE \
   --cors '{"AllowOrigins":["*"],"AllowMethods":["POST"],"AllowHeaders":["content-type"],"MaxAge":86400}'
 
-aws lambda add-permission --region ap-south-1 --function-name code-lambda \
+aws lambda add-permission --region $AWS_REGION --function-name code-lambda \
   --statement-id FunctionUrlAllowPublicAccess \
-  --action lambda:InvokeFunctionUrl \
-  --principal '*' \
-  --function-url-auth-type NONE
+  --action lambda:InvokeFunctionUrl --principal '*' --function-url-auth-type NONE
 
-aws lambda add-permission --region ap-south-1 --function-name code-lambda \
+aws lambda add-permission --region $AWS_REGION --function-name code-lambda \
   --statement-id FunctionUrlAllowPublicInvoke \
-  --action lambda:InvokeFunction \
-  --principal '*'
-# Newer CLIs support `--invoked-via-function-url` to scope this to URL traffic only.
+  --action lambda:InvokeFunction --principal '*'
+
+export FUNCTION_URL=$(aws lambda get-function-url-config --region $AWS_REGION \
+  --function-name code-lambda --query FunctionUrl --output text)
+echo $FUNCTION_URL
 ```
 
-### 6. Concurrency cap
+Save `$FUNCTION_URL` for the frontend's `VITE_LAMBDA_URL`.
+
+## 7. Concurrency cap
 
 ```bash
-aws lambda put-function-concurrency --region ap-south-1 --function-name code-lambda \
+aws lambda put-function-concurrency --region $AWS_REGION --function-name code-lambda \
   --reserved-concurrent-executions 10
 ```
 
-### 7. Smoke test
+## 8. Smoke test
 
 ```bash
-URL=https://kvdcixmh7iojuulgcyg7p7tiia0rwhps.lambda-url.ap-south-1.on.aws/
-curl -s -X POST -H 'Content-Type: application/json' $URL -d '{"is_warmup":true}'
-curl -s -X POST -H 'Content-Type: application/json' $URL \
+curl -s -X POST -H 'Content-Type: application/json' $FUNCTION_URL -d '{"is_warmup":true}'
+curl -s -X POST -H 'Content-Type: application/json' $FUNCTION_URL \
   -d '{"language":"python","code":"print(1+1)"}'
 ```
 
-## Redeploy after code changes
+## Redeploy
 
 ```bash
 docker buildx build --platform linux/arm64 --provenance=false --output=type=docker -t code-lambda .
-docker tag code-lambda:latest 694318441020.dkr.ecr.ap-south-1.amazonaws.com/code-lambda:latest
-docker push 694318441020.dkr.ecr.ap-south-1.amazonaws.com/code-lambda:latest
-aws lambda update-function-code --region ap-south-1 --function-name code-lambda \
-  --image-uri 694318441020.dkr.ecr.ap-south-1.amazonaws.com/code-lambda:latest
+./test_suite.sh && ./test_stdin.sh && ./test_stress.sh   # optional, recommended
+docker tag code-lambda:latest $ECR:latest
+docker push $ECR:latest
+aws lambda update-function-code --region $AWS_REGION --function-name code-lambda \
+  --image-uri $ECR:latest
 ```
 
-## Issues we hit
+## Notes
 
-1. **Initial ECR push used OCI image-index manifest.**
-   Docker Desktop's default `buildx` pushed `application/vnd.oci.image.index.v1+json`, which Lambda rejects with
-   `InvalidParameterValueException: The image manifest ... is not supported.`
-   **Fix:** `docker buildx build --platform linux/arm64 --provenance=false --output=type=docker` forces a single-arch v2 manifest.
-
-2. **Function URLs are not supported in `ap-south-2` (Hyderabad).**
-   Every `*-function-url-config` call returned `AccessDeniedException: Unable to determine service/operation name to be authorized`. Not a perms issue — the API just isn't available in several newer regions (`ap-south-2`, `ap-southeast-4`, `eu-south-2`, `eu-central-2`, `il-central-1`, `me-central-1`).
-   **Fix:** redeployed to `ap-south-1`.
-
-3. **`NONE` auth type returned 403 Forbidden after adding only `InvokeFunctionUrl`.**
-   Since October 2025, AWS requires **both** `lambda:InvokeFunctionUrl` **and** `lambda:InvokeFunction` permissions on the resource-based policy.
-   **Fix:** added a second `add-permission` statement for `lambda:InvokeFunction`.
-
-4. **Java cold start tripped `COMPILE_TIME_LIMIT_EXCEEDED` at 512 MB memory.**
-   `javac` startup took >10s cold because Lambda CPU scales with memory, and at 512 MB there wasn't enough vCPU.
-   **Fix:** bumped function memory to 1024 MB. Warm invocations were fine even at 512 MB; cold starts now comfortably fit in the 10s compile budget.
-
-## Not yet wired up
-
-- **VPC with no NAT gateway** — README's network-sandbox layer. For now the only network block is the 10s subprocess timeout.
-- **EventBridge warmer** — keeps a container hot with a `{"is_warmup": true}` ping every 5 min.
-- **CloudWatch Logs VPC endpoint** — needed only once the function moves into a VPC.
+- **Region.** Function URLs aren't supported in `ap-south-2`, `ap-southeast-4`, `eu-south-2`, `eu-central-2`, `il-central-1`, `me-central-1`. Use `ap-south-1` or another mainstream region.
+- **Memory.** Don't drop below 1024 MB — `javac` cold start needs the CPU that scales with memory or it trips `COMPILE_TIME_LIMIT_EXCEEDED`.
