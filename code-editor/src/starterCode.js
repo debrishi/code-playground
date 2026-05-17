@@ -2,7 +2,7 @@
 // Each snippet is picked to demo stdin handling plus a small loop, so a
 // first-time user can hit Run and immediately see something happen.
 export const STARTER_CODE = {
-  cpp: `#include <iostream>
+  cpp: `#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -16,9 +16,12 @@ int main() {
     }
     return 0;
 }`,
-  java: `public class Main {
+  java: `import java.util.*;
+import java.io.*;
+
+public class Main {
     public static void main(String[] args) {
-        java.util.Scanner sc = new java.util.Scanner(System.in);
+        Scanner sc = new Scanner(System.in);
         String name = sc.hasNext() ? sc.next() : "World";
         System.out.println("Hello " + name + "!");
         for (int i = 1; i <= 5; i++) {
