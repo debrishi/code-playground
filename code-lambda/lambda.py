@@ -14,6 +14,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import time
 
 # --- Limits (per README MVP) ---
 MAX_TIME_SEC = 10                   # user-code wall-clock
@@ -193,24 +194,44 @@ def lambda_handler(event, context):
 
         # Compile step runs uncapped — compilers can legitimately need more
         # memory and produce binaries larger than the user-code FSIZE cap.
+        compile_ms = None
         if cfg["compile"]:
+            t0 = time.perf_counter()
             rc, _, cerr, to = _run(cfg["compile"], workdir, None,
                                    cap_memory=False, cap_file_size=False)
+            compile_ms = round((time.perf_counter() - t0) * 1000)
             if to:
                 return _response(400, {"error": "COMPILE_TIME_LIMIT_EXCEEDED"})
             if rc != 0:
                 return _response(400, {"error": "COMPILATION_ERROR", "details": cerr})
 
+        # `run_ms` is the wall-clock around the subprocess: fork + exec + the
+        # user's program + Python-side communicate() bookkeeping. Tiny
+        # programs floor out at ~10ms (~5ms locally) because of fork/exec
+        # overhead, not because the timer is broken. C++/Java toy programs
+        # also benefit from g++ -O2 dead-code elimination, so a 1e8-iter
+        # loop summing into a non-volatile variable runs in <1ms — the
+        # compiler folded it. Use `volatile` to force real execution when
+        # benchmarking.
+        t0 = time.perf_counter()
         rc, output, error, to = _run(cfg["run"], workdir, stdin_data,
                                      cap_memory=cfg["cap_memory"],
                                      env_extra=cfg.get("env"))
+        run_ms = round((time.perf_counter() - t0) * 1000)
         if to:
             return _response(400, {"error": "TIME_LIMIT_EXCEEDED"})
         if rc != 0:
             if any(sig in error for sig in OOM_SIGNATURES):
                 return _response(400, {"error": "MEMORY_LIMIT_EXCEEDED"})
-            return _response(400, {"error": "RUNTIME_ERROR", "output": output, "details": error})
-        return _response(200, {"output": output})
+            return _response(400, {
+                "error": "RUNTIME_ERROR", "output": output, "details": error,
+                "compile_ms": compile_ms, "run_ms": run_ms,
+            })
+        return _response(200, {
+            "output": output,
+            "compile_ms": compile_ms,
+            "run_ms": run_ms,
+        })
 
     except Exception as e:
         return _response(500, {"error": str(e)})

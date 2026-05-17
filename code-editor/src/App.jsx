@@ -167,6 +167,8 @@ export default function App() {
         setOutput({
           status: truncated ? 'Output Limit Exceeded' : 'Finished',
           runtime,
+          compileMs: payload.compile_ms ?? null,
+          runMs: payload.run_ms ?? null,
           stdout: payload.output,
           error: null,
         });
@@ -183,6 +185,8 @@ export default function App() {
       setOutput({
         status: label,
         runtime,
+        compileMs: payload.compile_ms ?? null,
+        runMs: payload.run_ms ?? null,
         stdout: partialStdout,
         error: details || (partialStdout ? '' : label),
       });
@@ -437,7 +441,11 @@ export default function App() {
                 {output.runtime != null && (
                   <div className="flex items-center space-x-2 text-xs text-gray-500">
                     <Clock size={12} />
-                    <span>Finished in {output.runtime} ms</span>
+                    <span className="tabular-nums">
+                      {output.runMs != null && <>Run {output.runMs} ms · </>}
+                      {output.compileMs != null && <>Compile {output.compileMs} ms · </>}
+                      Total {output.runtime} ms
+                    </span>
                   </div>
                 )}
 
