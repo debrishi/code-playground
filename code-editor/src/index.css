@@ -1,1 +1,11 @@
 @import "tailwindcss";
+
+/*
+ * Disable rubber-band overscroll. Without this, scrolling past the top
+ * or bottom of the page in macOS Chrome exposes the browser's default
+ * white background underneath the dark app shell.
+ */
+html,
+body {
+  overscroll-behavior: none;
+}

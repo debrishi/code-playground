@@ -24,13 +24,20 @@ const LANGUAGES = [
   { label: 'TypeScript', api: 'typescript', monaco: 'typescript' },
 ];
 
-// File extensions used by the Save button. Java compiler requires the
-// filename to match the public class, hence Main.java rather than code.java.
-const FILENAME = {
-  cpp: 'code.cpp',
-  java: 'Main.java',
-  python: 'code.py',
-  typescript: 'code.ts',
+// File metadata used by the Save dialog. Java compiler requires the filename
+// to match the public class, hence Main.java rather than code.java — but
+// once the user opens the Save dialog they can type whatever they want.
+const EXTENSION = {
+  cpp: 'cpp',
+  java: 'java',
+  python: 'py',
+  typescript: 'ts',
+};
+const DEFAULT_BASENAME = {
+  cpp: 'code',
+  java: 'Main',
+  python: 'code',
+  typescript: 'code',
 };
 
 // Resolve the deployed Lambda URL at build time. Empty string -> mock mode.
@@ -201,18 +208,38 @@ export default function App() {
     setCodeByLang((prev) => ({ ...prev, [language.api]: value ?? '' }));
   };
 
-  // Save button: trigger a browser download of the current editor contents
-  // using the language-appropriate filename.
-  const handleSaveCode = () => {
+  // Save button: open a modal so the user can pick a filename, then trigger
+  // a browser download of the editor contents with `<basename>.<ext>`.
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveBasename, setSaveBasename] = useState('');
+  const saveInputRef = useRef(null);
+  const openSaveModal = () => {
+    setSaveBasename(DEFAULT_BASENAME[language.api] ?? 'code');
+    setSaveModalOpen(true);
+  };
+  // Auto-focus + select the basename when the modal opens, so the user can
+  // immediately type to replace the default.
+  useEffect(() => {
+    if (saveModalOpen && saveInputRef.current) {
+      saveInputRef.current.focus();
+      saveInputRef.current.select();
+    }
+  }, [saveModalOpen]);
+  const performSave = () => {
+    const basename = saveBasename.trim();
+    if (!basename) return;
+    const ext = EXTENSION[language.api] ?? 'txt';
+    const filename = `${basename}.${ext}`;
     const blob = new Blob([code ?? ''], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = FILENAME[language.api] ?? 'code.txt';
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    setSaveModalOpen(false);
   };
 
   return (
@@ -281,9 +308,9 @@ export default function App() {
 
         <div className="flex items-center space-x-2">
           <button
-            onClick={handleSaveCode}
+            onClick={openSaveModal}
             className={`p-2.5 rounded transition-all duration-300 hover:scale-105 active:scale-95 ${theme === 'dark' ? 'bg-[#333] text-gray-400 hover:bg-[#404040]' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-            title={`Save as ${FILENAME[language.api]}`}
+            title={`Save as .${EXTENSION[language.api]}`}
           >
             <Save size={18} />
           </button>
@@ -416,15 +443,15 @@ export default function App() {
 
                 {/* Stdout (when present) */}
                 {output.stdout && (
-                  <div className={`p-3 rounded-md overflow-x-auto ${theme === 'dark' ? 'bg-[#2a2a2a] text-gray-300' : 'bg-gray-100 text-gray-800'}`}>
-                    <pre className="whitespace-pre-wrap">{output.stdout}</pre>
+                  <div className={`p-3 rounded-md ${theme === 'dark' ? 'bg-[#2a2a2a] text-gray-300' : 'bg-gray-100 text-gray-800'}`}>
+                    <pre className="whitespace-pre-wrap break-all">{output.stdout}</pre>
                   </div>
                 )}
 
                 {/* Error / details */}
                 {output.error && (
-                  <div className={`p-3 rounded-md overflow-x-auto ${theme === 'dark' ? 'bg-[#3a1a1a] text-red-300 border border-red-900/40' : 'bg-red-50 text-red-700 border border-red-100'}`}>
-                    <pre className="whitespace-pre-wrap">{output.error}</pre>
+                  <div className={`p-3 rounded-md ${theme === 'dark' ? 'bg-[#3a1a1a] text-red-300 border border-red-900/40' : 'bg-red-50 text-red-700 border border-red-100'}`}>
+                    <pre className="whitespace-pre-wrap break-all">{output.error}</pre>
                   </div>
                 )}
               </div>
@@ -472,6 +499,60 @@ export default function App() {
 
         </section>
       </main>
+
+      {/* --- Save dialog --- */}
+      {saveModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setSaveModalOpen(false); }}
+        >
+          <div
+            className={`w-[90%] max-w-md rounded-lg shadow-xl p-5 space-y-4 ${theme === 'dark' ? 'bg-[#262626] border border-[#333] text-gray-200' : 'bg-white border border-gray-200 text-gray-900'}`}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') performSave();
+              if (e.key === 'Escape') setSaveModalOpen(false);
+            }}
+          >
+            <h2 className="text-base font-semibold">Save file</h2>
+            <div className={`flex items-stretch rounded border overflow-hidden font-mono text-sm ${theme === 'dark' ? 'bg-[#1e1e1e] border-[#444]' : 'bg-gray-50 border-gray-300'}`}>
+              <input
+                ref={saveInputRef}
+                type="text"
+                value={saveBasename}
+                onChange={(e) => setSaveBasename(e.target.value)}
+                placeholder="filename"
+                className="flex-1 min-w-0 bg-transparent px-3 py-2 outline-none"
+              />
+              <span className={`px-3 py-2 select-none ${theme === 'dark' ? 'bg-[#333] text-gray-400 border-l border-[#444]' : 'bg-gray-100 text-gray-500 border-l border-gray-300'}`}>
+                .{EXTENSION[language.api] ?? 'txt'}
+              </span>
+            </div>
+            <div className="flex justify-end space-x-2 pt-1">
+              <button
+                onClick={() => setSaveModalOpen(false)}
+                className={`px-4 py-2 rounded text-sm transition-all duration-200 active:scale-95 ${theme === 'dark' ? 'border border-[#444] text-gray-300 hover:bg-[#333]' : 'border border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={performSave}
+                disabled={!saveBasename.trim()}
+                className={`px-4 py-2 rounded text-sm font-medium transition-all duration-300 transform active:scale-95 border outline-none focus:ring-2 focus:ring-opacity-50 focus:ring-green-400
+                  ${!saveBasename.trim()
+                    ? theme === 'dark'
+                      ? 'bg-[#333] text-gray-500 border-transparent cursor-not-allowed'
+                      : 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                    : theme === 'dark'
+                      ? 'bg-[#132e21] text-green-400 border-[#1b4d30] hover:bg-[#1a3d2b] hover:border-[#23633e] hover:shadow-sm'
+                      : 'bg-green-50 text-green-600 hover:bg-green-100 border-green-200 hover:shadow-sm'
+                  }`}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
