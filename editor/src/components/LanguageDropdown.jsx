@@ -9,6 +9,9 @@ export default function LanguageDropdown({ language, onChange, theme }) {
     <div className="relative">
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="Select language"
+        aria-haspopup="listbox"
+        aria-expanded={isOpen}
         className={`flex items-center space-x-2 px-4 py-2 rounded text-sm border transition-all duration-300 active:scale-95 ${theme === 'dark' ? 'border-[#444] text-gray-300 hover:bg-[#333]' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
       >
         <span>{language.label}</span>

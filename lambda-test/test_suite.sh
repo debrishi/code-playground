@@ -39,15 +39,13 @@ t java mle      '{"language":"java","code":"public class Main{public static void
 t java trunc    '{"language":"java","code":"public class Main{public static void main(String[] a){StringBuilder s=new StringBuilder();for(int i=0;i<5000;i++)s.append(\"x\");System.out.print(s);}}"}' 'OUTPUT_TRUNCATED'
 t java stdin    '{"language":"java","code":"import java.util.Scanner;public class Main{public static void main(String[] a){Scanner s=new Scanner(System.in);System.out.println(\"Hi \"+s.next());}}","stdin":"Deb"}' 'Hi Deb'
 
-echo; echo "=== TYPESCRIPT ==="
-t ts success  '{"language":"typescript","code":"const m: string = \"hi\"; console.log(m);"}' '"statusCode": 200'
-t ts runtime  '{"language":"typescript","code":"throw new Error(\"boom\");"}' 'ERROR'
-t ts compile  '{"language":"typescript","code":"const x: number ="}' 'ERROR'
-t ts tle      '{"language":"typescript","code":"while(true){}"}' 'ERROR_TLE'
-t ts mle      '{"language":"typescript","code":"const a:number[]=[]; while(true)a.push(Math.random());"}' 'ERROR_MLE'
-t ts trunc    '{"language":"typescript","code":"process.stdout.write(\"x\".repeat(5000));"}' 'OUTPUT_TRUNCATED'
-t ts stdin    '{"language":"typescript","code":"const d: string = require(\"fs\").readFileSync(0,\"utf8\").trim(); console.log(`Hi ${d}`);","stdin":"Deb"}' 'Hi Deb'
+echo; echo "=== LIBRARIES (LeetCode parity) ==="
+t cpp c++23     '{"language":"cpp","code":"#include <bits/stdc++.h>\nint main(){ auto x = 42uz; std::cout << \"cpp23-uz-\" << x; }"}' 'cpp23-uz-42'
+t python sorted '{"language":"python","code":"from sortedcontainers import SortedDict\nd=SortedDict()\nd[\"b\"]=2\nd[\"a\"]=1\nprint(\"-\".join(d.keys()))"}' 'a-b'
 
 echo; echo "=== EDGE ==="
 t edge empty    '{"language":"python","code":""}' 'No code provided'
 t edge badlang  '{"language":"rust","code":"fn main(){}"}' 'Unsupported language'
+t edge no-ts    '{"language":"typescript","code":"console.log(1);"}' 'Unsupported language'
+t edge nonstr   '{"language":"python","code":123}' 'No code provided'
+t edge warmup   '{"is_warmup":true}' 'warmed'

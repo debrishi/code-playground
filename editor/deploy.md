@@ -1,53 +1,44 @@
-# Deployment — code-editor
+# Deployment — editor
 
-Vite SPA, deployed to Cloudflare Pages via direct upload.
-
-```bash
-cd editor
-export PROJECT=code-playground
-export LAMBDA_URL=$(aws lambda get-function-url-config --region ap-south-1 \
-  --function-name code-lambda --query FunctionUrl --output text)
-```
+Vite SPA, deployed to Cloudflare Pages via direct upload. The scripted path
+is [`deploy.sh`](../deploy.sh) at the repo root — it deploys the Lambda and
+then the editor in one run. Prefer it over the manual steps below.
 
 ## 1. One-time setup
 
 ```bash
-npx wrangler login                                              # browser auth
-npx wrangler pages project create $PROJECT --production-branch=main
+npx wrangler login    # or set CLOUDFLARE_API_TOKEN
+
+# Only if the Pages project doesn't exist yet:
+npx wrangler pages project create runbox --production-branch=main
 ```
 
-The create command prints the production URL (e.g. `code-playground-e3s.pages.dev`).
-Save it:
+The create command prints the production URL (e.g. `runbox.pages.dev`).
+
+Tighten Lambda CORS to this origin (and localhost for dev) by redeploying
+with the origins argument:
 
 ```bash
-export PAGES_URL=https://code-playground-e3s.pages.dev
+../deploy.sh "https://runbox.pages.dev,http://localhost:5173"
 ```
 
-Tighten Lambda CORS to this origin (and localhost for dev):
+## 2. Deploy / re-deploy
 
 ```bash
-aws lambda update-function-url-config --region ap-south-1 --function-name code-lambda \
-  --cors '{"AllowOrigins":["'$PAGES_URL'","http://localhost:5173"],"AllowMethods":["POST"],"AllowHeaders":["content-type"],"MaxAge":86400}'
+../deploy.sh
 ```
 
-## 2. Deploy
+Equivalent manual steps for the frontend half only:
 
 ```bash
+export LAMBDA_URL=$(aws lambda get-function-url-config --region ap-south-1 \
+  --function-name runbox-lambda --query FunctionUrl --output text)
 VITE_LAMBDA_URL=$LAMBDA_URL npm run build
-npx wrangler pages deploy dist --project-name=$PROJECT --branch=main
+npx wrangler pages deploy dist --project-name=runbox --branch=main
 ```
 
-Smoke test: open `$PAGES_URL`, click **Run Code** with `Developer` in stdin. Expect
-`Hello Developer!`.
-
-## 3. Re-deploy
-
-Same as step 2:
-
-```bash
-VITE_LAMBDA_URL=$LAMBDA_URL npm run build
-npx wrangler pages deploy dist --project-name=$PROJECT --branch=main
-```
+Smoke test: open the Pages URL, click **Run Code** with `Developer` in stdin.
+Expect `Hello Developer!`.
 
 Roll back via dashboard → Deployments → previous build → **Rollback**.
 

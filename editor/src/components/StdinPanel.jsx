@@ -3,7 +3,7 @@ import { ChevronDown } from 'lucide-react';
 
 export default function StdinPanel({ stdin, onChange, theme }) {
   // stdin starts expanded so first-time users notice the input field —
-  // the Python and TypeScript starters read from stdin, so a collapsed
+  // every language's starter reads from stdin, so a collapsed
   // panel with a magic 'Developer' default looks like the starter is
   // ignoring input until you discover the chevron.
   const [expanded, setExpanded] = useState(true);

@@ -1,12 +1,10 @@
-"""AWS Lambda handler that runs user code in C++, Java, Python, or TypeScript.
+"""AWS Lambda handler that runs user code in C++, Java, or Python.
 
-Sandboxing:
-  * 10s subprocess timeout, killed as a process group (no orphan survivors).
-  * 256MB address-space cap for languages that don't self-manage heap.
-  * 50 forks per invocation, 10MB max file size, 4KB stdout/stderr cap.
-  * Per-invocation temp dir, wiped in `finally`.
+Sandboxing: 10s group-killed subprocess timeout, 512MB per-language memory
+cap, 50 forks, 10MB max file size, 4KB output cap, per-invocation temp dir.
 """
 import json
+import logging
 import os
 import resource
 import shutil
@@ -15,102 +13,99 @@ import subprocess
 import tempfile
 import time
 
+logger = logging.getLogger()
+
 MAX_TIME_SEC = 10                   # combined compile + run budget
-MAX_MEMORY_MB = 512                 # per-language cap: ulimit -v / -Xmx / --max-old-space-size / ASan rss
+MAX_MEMORY_MB = 512                 # per-language cap: ulimit -v / -Xmx / ASan rss
 MAX_FILE_SIZE_MB = 10               # RLIMIT_FSIZE — stops /tmp fill attacks
 MAX_NPROC = 50                      # RLIMIT_NPROC
 MAX_OUTPUT_SIZE = 4096              # bytes of stdout/stderr returned to the caller
+MAX_CODE_BYTES = 128 * 1024         # source size cap — rejects giant payloads early
+MAX_STDIN_BYTES = 128 * 1024        # stdin size cap
 TRUNCATED_MSG = f"\n[OUTPUT_TRUNCATED: Exceeded {MAX_OUTPUT_SIZE}B Limit]"
 
-# Precompiled header built during `docker build` — serialises the parsed AST
-# of <bits/stdc++.h> (the entire STL) so clang skips re-parsing ~30k lines of
-# template-heavy headers on every compilation.  See Dockerfile.
+# Built during `docker build` (see Dockerfile): pre-parsed <bits/stdc++.h>
+# AST, and a JVM AOT cache of the source-launch/javac classes.
 CPP_PCH = "/opt/cpp-pch/stdc++.h.pch"
-
-# AOT cache built during `docker build` — pre-links all classes used by
-# source-launch mode (internal javac + JDK core) so the JVM skips parsing,
-# verification, and linking on every invocation.  See Dockerfile.
 JAVA_AOT_CACHE = "/opt/java-aot/source-launch.aot"
 
-# Substrings we look for in stderr to surface a clean ERROR_MLE.
+# stderr substrings that map a non-zero exit to ERROR_MLE.
 OOM_SIGNATURES = (
     "MemoryError",                      # Python
     "OutOfMemoryError",                 # JVM
-    "JavaScript heap out of memory",    # Node
     "std::bad_alloc",                   # C++
     "AddressSanitizer: out of memory",  # C++ under ASan
-    "rss limit exhausted",              # C++ ASan hard_rss_limit_mb (RSS cap)
+    "rss limit exhausted",              # C++ ASan hard_rss_limit_mb
 )
 
-# Each entry is {source, run}: write code to `source`, run one subprocess.
-# No separate compile phase (C++ compiles inline); each `run` self-caps memory
-# (Python ulimit -v, C++ ASan rss, Node --max-old-space-size, Java -Xmx).
-# ---------------------------------------------------------------------------
-# INIT-phase toolchain warming: page in clang++ and JVM binaries while we have
-# burst CPU (up to 6 vCPUs for 10s).  Subsequent invocations skip the costly
-# page-fault IO because everything is already in the page cache.
-# ---------------------------------------------------------------------------
+
 def _warm_toolchains():
+    """INIT-phase warming: use the burst CPU to page in the toolchains so the
+    first user invocation skips the cold page-fault IO."""
+    # Read PCH + AOT cache end-to-end; the runs below only touch parts.
+    for path in (CPP_PCH, JAVA_AOT_CACHE):
+        try:
+            with open(path, "rb") as f:
+                while f.read(1 << 20):
+                    pass
+        except OSError:
+            pass
     try:
         subprocess.run(
-            ["clang++", "-std=c++20", "-O2", "-fsanitize=address",
-             "-fno-omit-frame-pointer", f"-include-pch", CPP_PCH,
+            ["clang++", "-std=c++2b", "-O2", "-fno-finite-loops",
+             "-fsanitize=address", "-fno-omit-frame-pointer", "-g",
+             "-include-pch", CPP_PCH,
              "-x", "c++", "-", "-fsyntax-only"],
             input="int main(){}", text=True,
             timeout=MAX_TIME_SEC, capture_output=True,
         )
     except Exception:
         pass
+    # Source-launch a real program (not `java -version`) so the in-memory
+    # javac path is faulted in now.  Flags match LANG_CONFIG.
+    warm_dir = None
     try:
+        warm_dir = tempfile.mkdtemp(prefix="warm_")
+        with open(os.path.join(warm_dir, "W.java"), "w") as f:
+            f.write('class W { public static void main(String[] a) {'
+                    ' System.out.print("ok"); } }')
         subprocess.run(
             ["java", f"-XX:AOTCache={JAVA_AOT_CACHE}",
              "-XX:TieredStopAtLevel=1", "-XX:+UseSerialGC",
-             "-version"],
-            timeout=MAX_TIME_SEC, capture_output=True,
+             "W.java"],
+            cwd=warm_dir, timeout=MAX_TIME_SEC, capture_output=True,
         )
     except Exception:
         pass
+    finally:
+        if warm_dir:
+            shutil.rmtree(warm_dir, ignore_errors=True)
 
 _warm_toolchains()
 
 
+# {source, run} per language: write code to `source`, run one subprocess
+# (compile + run share it).  Each `run` self-caps memory; `exec` makes the
+# timeout kill the real process, not the wrapper shell.
 LANG_CONFIG = {
     "python": {
         "source": "main.py",
-        # ulimit -v caps address space; exec so timeout targets python, not sh.
         "run": ["sh", "-c", f"ulimit -v {MAX_MEMORY_MB * 1024}; exec python3 main.py"],
     },
     "cpp": {
+        # -fno-finite-loops keeps `while(1){}` alive under -O2.
+        # ASan reserves ~8GB virtual, so memory is capped via its RSS limiter.
         "source": "main.cpp",
-        # Compile && run in one shell; exec so timeout targets the binary.
-        # -fno-finite-loops keeps `while(1){}` (clang -O2 would delete it).
-        # ASan needs ~8GB virtual, so memory is capped via its RSS limiter.
-        # -include-pch loads the pre-parsed <bits/stdc++.h> AST built during
-        # docker build — skips re-parsing ~30k lines of STL on every compile.
-        # User code that #includes headers already in the PCH is deduplicated.
         "run": ["sh", "-c",
                 "export ASAN_OPTIONS=abort_on_error=1:halt_on_error=1:"
                 f"detect_leaks=0:hard_rss_limit_mb={MAX_MEMORY_MB}; "
-                "clang++ -std=c++20 -O2 -fno-finite-loops -fsanitize=address "
+                "clang++ -std=c++2b -O2 -fno-finite-loops -fsanitize=address "
                 f"-fno-omit-frame-pointer -g -include-pch {CPP_PCH} "
                 "-o main main.cpp && exec ./main"],
     },
-    "typescript": {
-        "source": "main.ts",
-        # Node 24 strips TypeScript types natively (stable since 23.6) — no flag.
-        "run": ["node", f"--max-old-space-size={MAX_MEMORY_MB}", "main.ts"],
-    },
     "java": {
-        # `java Main.java` source-launch: compiles in-memory, allows any public
-        # class name + Java 25 compact source; compile errors exit non-zero.
-        #
-        # Startup optimisations (shave ~2s off cold source-launch):
-        #   -XX:AOTCache          loads the pre-built cache from docker build
-        #                         (pre-linked javac compiler + JDK core classes).
-        #   -XX:TieredStopAtLevel=1  C1-only — skip C2 profiling/compilation;
-        #                         user code never runs long enough to benefit.
-        #   -XX:+UseSerialGC      single-threaded GC; no thread-pool overhead
-        #                         for a sub-10s process with a small heap.
+        # Source-launch compiles in-memory; AOTCache + C1-only + SerialGC
+        # shave ~2s off cold start for short-lived processes.
         "source": "Main.java",
         "run": ["java",
                 f"-XX:AOTCache={JAVA_AOT_CACHE}",
@@ -142,9 +137,7 @@ def _read_capped(path):
 
 
 def _preexec():
-    """preexec_fn: uniform RLIMITs (nproc, fsize) + new session for group-kill.
-    Memory caps live in each language's `run` command, not here.
-    """
+    """RLIMITs (nproc, fsize) + new session for group-kill."""
     def _try(fn):
         try:
             fn()
@@ -160,9 +153,7 @@ def _preexec():
 
 
 def _run(cmd, workdir, stdin_data, timeout=MAX_TIME_SEC):
-    """Run a subprocess in its own process group.
-    Returns (returncode, stdout, stderr, timed_out).
-    """
+    """Run cmd in its own process group -> (rc, stdout, stderr, timed_out)."""
     out_path = os.path.join(workdir, "stdout")
     err_path = os.path.join(workdir, "stderr")
     with open(out_path, "w") as out, open(err_path, "w") as err:
@@ -188,6 +179,29 @@ def _run(cmd, workdir, stdin_data, timeout=MAX_TIME_SEC):
             return -1, _read_capped(out_path), _read_capped(err_path), True
 
 
+def _validate(event):
+    """Validate the request payload. Returns (config, code, stdin, error_response)."""
+    if not isinstance(event, dict):
+        return None, None, None, _response(400, {"error": "ERROR", "details": "Payload must be a JSON object"})
+
+    code = event.get("code")
+    lang = event.get("language", "python")
+    stdin_data = event.get("stdin", "")
+
+    if not code or not isinstance(code, str) or not code.strip():
+        return None, None, None, _response(400, {"error": "ERROR", "details": "No code provided"})
+    if len(code.encode("utf-8", errors="replace")) > MAX_CODE_BYTES:
+        return None, None, None, _response(400, {"error": "ERROR", "details": f"Code exceeds {MAX_CODE_BYTES // 1024}KB limit"})
+    if not isinstance(lang, str) or lang not in LANG_CONFIG:
+        return None, None, None, _response(400, {"error": "ERROR", "details": f"Unsupported language: {lang}"})
+    if not isinstance(stdin_data, str):
+        return None, None, None, _response(400, {"error": "ERROR", "details": "stdin must be a string"})
+    if len(stdin_data.encode("utf-8", errors="replace")) > MAX_STDIN_BYTES:
+        return None, None, None, _response(400, {"error": "ERROR", "details": f"stdin exceeds {MAX_STDIN_BYTES // 1024}KB limit"})
+
+    return LANG_CONFIG[lang], code, stdin_data, None
+
+
 def lambda_handler(event, context):
     # Function URL wraps the body as a string; direct invokes pass a dict.
     if isinstance(event, dict) and isinstance(event.get("body"), str):
@@ -196,16 +210,13 @@ def lambda_handler(event, context):
         except json.JSONDecodeError:
             return _response(400, {"error": "Invalid JSON"})
 
-    code = event.get("code")
-    lang = event.get("language", "python")
-    stdin_data = event.get("stdin", "")
+    # EventBridge warmer ping — respond immediately, run nothing.
+    if isinstance(event, dict) and event.get("is_warmup"):
+        return _response(200, {"warmed": True})
 
-    if not code:
-        return _response(400, {"error": "ERROR", "details": "No code provided"})
-    if lang not in LANG_CONFIG:
-        return _response(400, {"error": "ERROR", "details": f"Unsupported language: {lang}"})
-
-    cfg = LANG_CONFIG[lang]
+    cfg, code, stdin_data, err = _validate(event)
+    if err:
+        return err
 
     workdir = None
     try:
@@ -213,8 +224,6 @@ def lambda_handler(event, context):
         with open(os.path.join(workdir, cfg["source"]), "w") as f:
             f.write(code)
 
-        # One subprocess covers compile + run; run_ms is wall-clock around it
-        # (toy programs floor at ~10ms from fork/exec, and -O2 may fold loops).
         t0 = time.perf_counter()
         rc, output, error, to = _run(cfg["run"], workdir, stdin_data,
                                      timeout=MAX_TIME_SEC)
@@ -225,7 +234,6 @@ def lambda_handler(event, context):
             # SIGKILL with no OOM signature = cgroup OOM-killer backstop.
             if rc == -signal.SIGKILL or any(sig in error for sig in OOM_SIGNATURES):
                 return _response(400, {"error": "ERROR_MLE"})
-            # Catch-all: runtime crash or compile failure (both exit non-zero).
             return _response(400, {
                 "error": "ERROR", "output": output, "details": error,
                 "run_ms": run_ms,
@@ -235,8 +243,10 @@ def lambda_handler(event, context):
             "run_ms": run_ms,
         })
 
-    except Exception as e:
-        return _response(500, {"error": "ERROR", "details": str(e)})
+    except Exception:
+        # Log the full traceback to CloudWatch; never leak internals to the caller.
+        logger.exception("Unhandled error while executing user code")
+        return _response(500, {"error": "ERROR", "details": "Internal error"})
     finally:
         if workdir:
             shutil.rmtree(workdir, ignore_errors=True)

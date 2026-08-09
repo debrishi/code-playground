@@ -77,7 +77,6 @@ export function useCodeRunner() {
         setOutput({
           status: truncated ? 'Output Limit Exceeded' : 'Finished',
           runtime,
-          compileMs: payload.compile_ms ?? null,
           runMs: payload.run_ms ?? null,
           stdout: payload.output,
           error: null,
@@ -88,7 +87,7 @@ export function useCodeRunner() {
       // Error envelopes from the Lambda — see lambda.py for the full set.
       const errCode = payload.error || `HTTP ${res.status}`;
       const label = ERROR_LABEL[errCode] || errCode;
-      // RUNTIME_ERROR carries partial stdout; everything else uses `details`.
+      // ERROR responses may carry partial stdout alongside `details`.
       const details = payload.details || '';
       const partialStdout =
         typeof payload.output === 'string' ? payload.output : '';
@@ -96,7 +95,6 @@ export function useCodeRunner() {
       setOutput({
         status: label,
         runtime,
-        compileMs: payload.compile_ms ?? null,
         runMs: payload.run_ms ?? null,
         stdout: partialStdout,
         error: details || (partialStdout ? '' : label),

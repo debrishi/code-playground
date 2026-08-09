@@ -2,6 +2,15 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: Runbox Python backend — container-image Lambda with Function URL.
 
+Parameters:
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Default: '*'
+    Description: >-
+      CORS allowed origins for the Function URL. Tighten to your Pages URL +
+      localhost after the first deploy, e.g.
+      "https://runbox.pages.dev,http://localhost:5173".
+
 Globals:
   Function:
     Timeout: 20
@@ -22,16 +31,27 @@ Resources:
     Properties:
       FunctionName: runbox-lambda
       PackageType: Image
+      # The Function URL has no auth. Reserved concurrency is the main abuse
+      # / cost control — uncomment once your account has enough unreserved
+      # concurrency headroom (needs 100+ left over after reserving):
+      ReservedConcurrentExecutions: 10
       FunctionUrlConfig:
         AuthType: NONE
         Cors:
-          AllowOrigins:
-            - '*'
+          AllowOrigins: !Ref AllowedOrigins
           AllowMethods:
             - POST
           AllowHeaders:
             - content-type
           MaxAge: 86400
+      Events:
+        # Warmer: invoke every 5 minutes so one container stays initialised.
+        # The handler short-circuits on is_warmup, so each ping costs ~1ms.
+        WarmupSchedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(5 minutes)
+            Input: '{"is_warmup": true}'
     Metadata:
       Dockerfile: Dockerfile
       DockerContext: .

@@ -76,12 +76,6 @@ t "java: exception on stderr" "ArithmeticException" \
 t "java: System.err" "err-channel" \
     '{"language":"java","code":"public class Main{public static void main(String[] a){System.err.println(\"err-channel\"); System.exit(2);}}"}'
 
-echo; echo "=== TypeScript specifics ==="
-t "ts: type is stripped, runs" "42" \
-    '{"language":"typescript","code":"const add = (a: number, b: number): number => a+b; console.log(add(20,22));"}'
-t "ts: runtime error" "ReferenceError\\|is not defined" \
-    '{"language":"typescript","code":"console.log(doesNotExist);"}'
-
 echo; echo "=== C++ specifics ==="
 t "cpp: segfault -> non-zero rc" "statusCode\": 400" \
     '{"language":"cpp","code":"int main(){ volatile int* p=nullptr; *p=1; return 0; }"}'
@@ -93,8 +87,14 @@ t "cpp: ASan catches use-after-free" "heap-use-after-free" \
 echo; echo "=== Payload edge cases ==="
 t "edge: missing language defaults to python" "ok" \
     '{"code":"print(\"ok\")"}'
-t "edge: whitespace code still runs" "statusCode\": 200" \
+t "edge: whitespace-only code rejected" "No code provided" \
     '{"language":"python","code":"   \n\t\n"}'
+t "edge: non-object payload rejected" "must be a JSON object" \
+    '{"body":"[1,2,3]"}'
+# 200KB of source > 128KB cap.
+big_code=$(python3 -c 'print("#"*200000)')
+t "edge: oversized code rejected" "exceeds 128KB" \
+    "{\"language\":\"python\",\"code\":\"${big_code}\"}"
 t "edge: language case-sensitive" "Unsupported" \
     '{"language":"Python","code":"print(1)"}'
 
@@ -105,8 +105,6 @@ t "cpp: truncation marker" "OUTPUT_TRUNCATED" \
     '{"language":"cpp","code":"#include <iostream>\nint main(){ for(int i=0;i<5000;i++) std::cout<<\"x\"; }"}'
 t "java: truncation marker" "OUTPUT_TRUNCATED" \
     '{"language":"java","code":"public class Main{public static void main(String[] a){StringBuilder s=new StringBuilder();for(int i=0;i<5000;i++)s.append(\"x\");System.out.print(s);}}"}'
-t "ts: truncation marker" "OUTPUT_TRUNCATED" \
-    '{"language":"typescript","code":"process.stdout.write(\"x\".repeat(5000));"}'
 
 echo; echo "=== ERROR field (all languages) ==="
 t "py: ERROR code" "ERROR" \
@@ -115,8 +113,6 @@ t "cpp: ERROR code" "ERROR" \
     '{"language":"cpp","code":"int main(){ return 1; }"}'
 t "java: ERROR code" "ERROR" \
     '{"language":"java","code":"public class Main{public static void main(String[] a){throw new RuntimeException(\"boom\");}}"}'
-t "ts: ERROR code" "ERROR" \
-    '{"language":"typescript","code":"throw new Error(\"boom\");"}'
 
 echo; echo "=== Process group kill on timeout (no orphan children) ==="
 # Grandchild sleeps 30s then tries to write. If the process group is killed,

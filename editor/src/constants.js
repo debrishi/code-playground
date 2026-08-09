@@ -3,7 +3,6 @@ export const LANGUAGES = [
   { label: 'C++', api: 'cpp', monaco: 'cpp' },
   { label: 'Java', api: 'java', monaco: 'java' },
   { label: 'Python', api: 'python', monaco: 'python' },
-  { label: 'TypeScript', api: 'typescript', monaco: 'typescript' },
 ];
 
 // File metadata used by the Save dialog. Java compiler requires the filename
@@ -13,13 +12,11 @@ export const EXTENSION = {
   cpp: 'cpp',
   java: 'java',
   python: 'py',
-  typescript: 'ts',
 };
 export const DEFAULT_BASENAME = {
   cpp: 'code',
   java: 'Main',
   python: 'code',
-  typescript: 'code',
 };
 
 // Resolve the deployed Lambda URL at build time. Empty string -> mock mode.
