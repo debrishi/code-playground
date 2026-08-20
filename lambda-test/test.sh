@@ -9,6 +9,15 @@ IMAGE_NAME="runbox-lambda-python-test"
 CONTAINER_NAME="runbox-test-container"
 PORT=9000
 
+# Always clean up, whatever path the script exits through: stop the container
+# (`--rm` removes it) and delete the test image. BuildKit's build cache
+# survives `rmi`, so the next run still rebuilds quickly.
+cleanup() {
+    docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker rmi -f "$IMAGE_NAME" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
 echo "=== Building Docker image ==="
 docker build --platform linux/arm64 -t "$IMAGE_NAME" "$SCRIPT_DIR/../lambda"
 
@@ -33,22 +42,23 @@ done
 
 echo ""
 echo "=== Running test_suite.sh ==="
-bash "$SCRIPT_DIR/test_suite.sh"
-SUITE_EXIT=$?
+SUITE_EXIT=0
+bash "$SCRIPT_DIR/test_suite.sh" || SUITE_EXIT=$?
 
 echo ""
 echo "=== Running test_stdin.sh ==="
-bash "$SCRIPT_DIR/test_stdin.sh"
-STDIN_EXIT=$?
+STDIN_EXIT=0
+bash "$SCRIPT_DIR/test_stdin.sh" || STDIN_EXIT=$?
 
 echo ""
 echo "=== Running test_stress.sh ==="
-bash "$SCRIPT_DIR/test_stress.sh"
-STRESS_EXIT=$?
+STRESS_EXIT=0
+bash "$SCRIPT_DIR/test_stress.sh" || STRESS_EXIT=$?
 
 echo ""
-echo "=== Stopping container ==="
-docker stop "$CONTAINER_NAME"
+echo "=== Cleaning up container and image ==="
+# The EXIT trap handles this too; doing it here makes the happy path explicit.
+cleanup
 
 echo ""
 echo "=== Results ==="
